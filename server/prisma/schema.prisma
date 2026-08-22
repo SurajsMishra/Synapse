@@ -14,21 +14,23 @@ model User {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  projects ProjectMember[]
-  files    File[]
+  ownedProjects Project[]       @relation("ProjectOwner")
+  projects      ProjectMember[] // keep for later collaboration
+  files         File[]
 }
 
 model Project {
   id          Int      @id @default(autoincrement())
   name        String
   description String?
+  ownerId     Int
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
+  owner   User            @relation("ProjectOwner", fields: [ownerId], references: [id], onDelete: Cascade)
   members ProjectMember[]
   files   File[]
 }
-
 model ProjectMember {
   id        Int      @id @default(autoincrement())
   role      String   @default("EDITOR")
