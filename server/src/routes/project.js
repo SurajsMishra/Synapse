@@ -10,5 +10,6 @@ router.get("/", projectController.getProjects);
 router.get("/:id", projectController.getProject);
 router.put("/:id", projectController.updateProject);
 router.delete("/:id", projectController.deleteProject);
+router.post("/:id/join", projectController.joinProject);
 
 module.exports = router;

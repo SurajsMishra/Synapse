@@ -6,6 +6,7 @@ import Signup from "./pages/Signup";
 import Dashboard from "./pages/Dashboard";
 import NewProject from "./pages/NewProject";
 import Protected from "./utils/Protected";
+import JoinProject from "./pages/JoinProject";
 
 function App() {
     return (
@@ -42,6 +43,14 @@ function App() {
                     element={
                         <Protected>
                             <IDE />
+                        </Protected>
+                    }
+                />
+                <Route
+                    path="/projects/join"
+                    element={
+                        <Protected>
+                            <JoinProject />
                         </Protected>
                     }
                 />

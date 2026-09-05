@@ -60,6 +60,9 @@ function Dashboard() {
                     >
                         + New Project
                     </button>
+                    <button onClick={() => navigate("/projects/join")}>
+                        Join Project
+                    </button>
                 </div>
 
                 {loading ? (
@@ -77,6 +80,7 @@ function Dashboard() {
                         >
                             Create Project
                         </button>
+
                     </div>
                 ) : (
                     <div className="projects-grid">

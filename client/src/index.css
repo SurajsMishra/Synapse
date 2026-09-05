@@ -179,3 +179,61 @@ body {
 .open-link {
   color: #007acc;
 }
+
+
+.navbar-right {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+}
+
+.online-users {
+  position: relative;
+}
+
+.online-label {
+  cursor: pointer;
+}
+
+.user-list {
+  position: absolute;
+  top: 35px;
+  right: 0;
+
+  background: #1e1e1e;
+  border: 1px solid #333;
+
+  padding: 10px;
+
+  min-width: 160px;
+
+  display: none;
+}
+
+.online-users:hover .user-list {
+  display: block;
+}
+
+.online-user {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+
+  padding: 6px;
+}
+
+.user-avatar {
+  width: 28px;
+  height: 28px;
+
+  border-radius: 50%;
+
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  background: #3b82f6;
+
+  font-size: 12px;
+  font-weight: bold;
+}
