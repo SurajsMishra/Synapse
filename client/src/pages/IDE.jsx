@@ -1,3 +1,4 @@
+
 import {
     useEffect,
     useRef,
@@ -45,6 +46,15 @@ function IDE() {
     // Prevent Monaco <-> Yjs infinite loop
     const applyingYjsUpdateRef = useRef(false);
 
+    // IMPORTANT:
+    // Tracks whether the initial server synchronization
+    // has completed.
+    const initialSyncReceivedRef = useRef(false);
+
+    // Tracks whether Monaco has already been initialized
+    // with the Yjs document.
+    const editorInitializedRef = useRef(false);
+
 
     // =========================================================
     // DEFAULT CODE
@@ -62,7 +72,7 @@ export default App;`;
 
 
     // =========================================================
-    // SOCKET + YJS COLLABORATION
+    // COLLABORATION INITIALIZATION
     // =========================================================
 
     useEffect(() => {
@@ -83,6 +93,11 @@ export default App;`;
             navigate("/");
             return;
         }
+
+
+        // Reset lifecycle refs for this project
+        initialSyncReceivedRef.current = false;
+        editorInitializedRef.current = false;
 
 
         // =====================================================
@@ -131,6 +146,55 @@ export default App;`;
         console.log(
             "SocketProvider connected"
         );
+
+
+        // =====================================================
+        // INITIALIZE MONACO FROM YJS
+        // =====================================================
+
+        const initializeEditorFromYjs = () => {
+
+            const editor =
+                editorRef.current;
+
+            const currentYText =
+                ytextRef.current;
+
+            if (!editor || !currentYText) {
+                return;
+            }
+
+            if (editorInitializedRef.current) {
+                return;
+            }
+
+
+            const currentText =
+                currentYText.toString();
+
+
+            console.log(
+                "Initializing Monaco from Yjs:",
+                currentText
+            );
+
+
+            applyingYjsUpdateRef.current = true;
+
+            try {
+
+                editor.setValue(
+                    currentText
+                );
+
+                editorInitializedRef.current = true;
+
+            } finally {
+
+                applyingYjsUpdateRef.current =
+                    false;
+            }
+        };
 
 
         // =====================================================
@@ -205,22 +269,32 @@ export default App;`;
                 return;
             }
 
+
             console.log(
                 "Yjs synchronization received"
             );
 
+
             /*
-             * SocketProvider is responsible for
-             * applying the actual Yjs update.
+             * IMPORTANT:
              *
-             * We only use this event to initialize
-             * an empty document.
+             * SocketProvider applies the actual
+             * Yjs update before/while this event
+             * reaches this handler.
+             *
+             * We MUST NOT initialize defaultCode
+             * before this point.
              */
 
-            if (
-                ytext.length === 0 &&
-                editorRef.current
-            ) {
+
+            initialSyncReceivedRef.current = true;
+
+
+            // -------------------------------------------------
+            // SERVER DOCUMENT IS EMPTY
+            // -------------------------------------------------
+
+            if (ytext.length === 0) {
 
                 console.log(
                     "Yjs document is empty."
@@ -230,11 +304,19 @@ export default App;`;
                     "Initializing default code..."
                 );
 
+
                 ytext.insert(
                     0,
                     defaultCode
                 );
             }
+
+
+            // -------------------------------------------------
+            // INITIALIZE MONACO
+            // -------------------------------------------------
+
+            initializeEditorFromYjs();
         };
 
 
@@ -468,6 +550,16 @@ export default App;`;
 
 
             // -------------------------------------------------
+            // Reset refs
+            // -------------------------------------------------
+
+            editorRef.current = null;
+
+            initialSyncReceivedRef.current = false;
+            editorInitializedRef.current = false;
+
+
+            // -------------------------------------------------
             // Disconnect socket
             // -------------------------------------------------
 
@@ -586,44 +678,63 @@ export default App;`;
         }
 
 
+        /*
+         * IMPORTANT:
+         *
+         * DO NOT initialize defaultCode here.
+         *
+         * The server synchronization may not have
+         * arrived yet.
+         *
+         * Initializing here would cause:
+         *
+         * Refresh
+         *   ↓
+         * Empty Y.Text
+         *   ↓
+         * defaultCode inserted
+         *   ↓
+         * Server sync arrives later
+         *
+         * Instead, we wait for collab:sync.
+         */
+
+
         // =====================================================
-        // INITIALIZE DOCUMENT
+        // INITIALIZE MONACO ONLY IF SYNC ALREADY ARRIVED
         // =====================================================
 
-        if (ytext.length === 0) {
+        if (
+            initialSyncReceivedRef.current &&
+            !editorInitializedRef.current
+        ) {
+
+            const currentText =
+                ytext.toString();
+
 
             console.log(
-                "Y.Text empty. Initializing default code..."
+                "Initial synchronized Y.Text:",
+                currentText
             );
 
-            ytext.insert(
-                0,
-                defaultCode
-            );
+
+            applyingYjsUpdateRef.current = true;
+
+            try {
+
+                editor.setValue(
+                    currentText
+                );
+
+                editorInitializedRef.current = true;
+
+            } finally {
+
+                applyingYjsUpdateRef.current =
+                    false;
+            }
         }
-
-
-        // =====================================================
-        // SET INITIAL MONACO VALUE
-        // =====================================================
-
-        const currentText =
-            ytext.toString();
-
-
-        console.log(
-            "Initial Y.Text:",
-            currentText
-        );
-
-
-        applyingYjsUpdateRef.current = true;
-
-        editor.setValue(
-            currentText
-        );
-
-        applyingYjsUpdateRef.current = false;
 
 
         // =====================================================
@@ -662,6 +773,22 @@ export default App;`;
 
 
             /*
+             * If Monaco hasn't received its initial
+             * synchronized value yet, don't blindly
+             * overwrite it.
+             *
+             * The initial sync handler is responsible
+             * for initialization.
+             */
+
+            if (
+                !initialSyncReceivedRef.current
+            ) {
+                return;
+            }
+
+
+            /*
              * IMPORTANT
              *
              * editor.setValue() resets the cursor
@@ -670,6 +797,7 @@ export default App;`;
              * We save the cursor offset first
              * and restore it afterwards.
              */
+
 
             const currentPosition =
                 currentEditor.getPosition();
@@ -751,12 +879,28 @@ export default App;`;
                 (event) => {
 
                     /*
-                     * Ignore changes that were caused
+                     * Ignore changes caused
                      * by Yjs.
                      */
 
                     if (
                         applyingYjsUpdateRef.current
+                    ) {
+                        return;
+                    }
+
+
+                    /*
+                     * Do not send Monaco changes
+                     * before initial synchronization.
+                     *
+                     * This prevents the empty/new
+                     * Monaco model from overwriting
+                     * the collaborative document.
+                     */
+
+                    if (
+                        !initialSyncReceivedRef.current
                     ) {
                         return;
                     }
@@ -1123,3 +1267,4 @@ export default App;`;
 
 
 export default IDE;
+
