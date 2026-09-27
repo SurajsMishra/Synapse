@@ -529,6 +529,50 @@ const projectSocketHandler = (io, socket) => {
         }
     );
 
+    socket.on("collab:cursor", async (data) => {
+        try {
+            const numericProjectId = Number(data.projectId);
+
+            const position = data.position;
+
+            const user = await prisma.user.findUnique({
+                where: {
+                    id: Number(socket.userId)
+                },
+                select: {
+                    id: true,
+                    username: true
+                }
+            });
+
+            if (!user) {
+                return;
+            }
+
+            const room = `project:${numericProjectId}`;
+
+            socket.to(room).emit(
+                "collab:cursor",
+                {
+                    projectId: numericProjectId,
+
+                    userId: user.id,
+
+                    username: user.username,
+
+                    position: {
+                        lineNumber: position.lineNumber,
+                        column: position.column
+                    }
+                }
+            );
+        } catch (error) {
+            console.error(
+                "Error broadcasting cursor:",
+                error
+            );
+        }
+    });
 };
 
 module.exports = projectSocketHandler;

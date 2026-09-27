@@ -1,4 +1,3 @@
-
 import {
     useEffect,
     useRef,
@@ -25,6 +24,12 @@ function IDE() {
     const { projectId } = useParams();
     const navigate = useNavigate();
 
+    // =========================================================
+    // PROJECT ID
+    // =========================================================
+
+    const numericProjectId = Number(projectId);
+
     const { user, logout } = useAuth();
 
     const [project, setProject] = useState(null);
@@ -41,19 +46,158 @@ function IDE() {
     const providerRef = useRef(null);
 
     const editorRef = useRef(null);
+
     const monacoBindingRef = useRef(null);
 
-    // Prevent Monaco <-> Yjs infinite loop
+    const cursorDisposableRef = useRef(null);
+
+    const remoteCursorHandlerRef = useRef(null);
+
+    const remoteCursorDecorationsRef = useRef({});
+
+
+    // =========================================================
+    // LIFECYCLE REFS
+    // =========================================================
+
     const applyingYjsUpdateRef = useRef(false);
 
-    // IMPORTANT:
-    // Tracks whether the initial server synchronization
-    // has completed.
     const initialSyncReceivedRef = useRef(false);
 
-    // Tracks whether Monaco has already been initialized
-    // with the Yjs document.
     const editorInitializedRef = useRef(false);
+
+
+    // =========================================================
+    // REMOTE CURSOR HANDLER
+    // =========================================================
+
+    const handleRemoteCursor = (data) => {
+
+        if (String(data.userId) === String(user?.id)) {
+            return;
+        }
+
+        if (
+            Number(data?.projectId) !==
+            numericProjectId
+        ) {
+            return;
+        }
+
+        const currentEditor =
+            editorRef.current;
+
+        if (!currentEditor) {
+            return;
+        }
+
+        const model =
+            currentEditor.getModel();
+
+        if (!model) {
+            return;
+        }
+
+        const remoteUserId =
+            String(data?.userId);
+        const username = data.username || `User ${remoteUserId}`;
+
+        const position =
+            data?.position;
+
+        if (
+            !position ||
+            !position.lineNumber ||
+            !position.column
+        ) {
+            return;
+        }
+
+
+        console.log(
+            "REMOTE CURSOR:",
+            data
+        );
+
+
+        // =====================================================
+        // KEEP CURSOR INSIDE VALID MONACO RANGE
+        // =====================================================
+
+        const lineNumber =
+            Math.max(
+                1,
+                Math.min(
+                    position.lineNumber,
+                    model.getLineCount()
+                )
+            );
+
+        const column =
+            Math.max(
+                1,
+                Math.min(
+                    position.column,
+                    model.getLineMaxColumn(lineNumber)
+                )
+            );
+
+
+        // =====================================================
+        // REMOVE OLD DECORATION
+        // =====================================================
+
+        const oldDecorations =
+            remoteCursorDecorationsRef.current[
+            remoteUserId
+            ] || [];
+
+
+        // =====================================================
+        // CREATE NEW DECORATION
+        // =====================================================
+
+        const newDecorations =
+            currentEditor.deltaDecorations(
+                oldDecorations,
+                [
+                    {
+                        range: {
+                            startLineNumber:
+                                lineNumber,
+
+                            startColumn:
+                                column,
+
+                            endLineNumber:
+                                lineNumber,
+
+                            endColumn:
+                                column
+                        },
+
+                        options: {
+
+                            // IMPORTANT:
+                            // zero-length Monaco ranges need
+                            // beforeContentClassName for a
+                            // visible cursor-like indicator.
+                            beforeContentClassName:
+                                `remote-cursor-${remoteUserId}`,
+
+                            hoverMessage: {
+                                value: username
+                            }
+                        }
+                    }
+                ]
+            );
+
+
+        remoteCursorDecorationsRef.current[
+            remoteUserId
+        ] = newDecorations;
+    };
 
 
     // =========================================================
@@ -81,9 +225,14 @@ export default App;`;
             return;
         }
 
-        const numericProjectId = Number(projectId);
 
-        if (Number.isNaN(numericProjectId)) {
+        // =====================================================
+        // VALIDATE PROJECT ID
+        // =====================================================
+
+        if (
+            Number.isNaN(numericProjectId)
+        ) {
 
             console.error(
                 "Invalid project ID:",
@@ -91,27 +240,41 @@ export default App;`;
             );
 
             navigate("/");
+
             return;
         }
 
 
-        // Reset lifecycle refs for this project
-        initialSyncReceivedRef.current = false;
-        editorInitializedRef.current = false;
+        // =====================================================
+        // RESET LIFECYCLE REFS
+        // =====================================================
+
+        initialSyncReceivedRef.current =
+            false;
+
+        editorInitializedRef.current =
+            false;
+
+        applyingYjsUpdateRef.current =
+            false;
 
 
         // =====================================================
         // CREATE YJS DOCUMENT
         // =====================================================
 
-        const ydoc = createYDoc();
+        const ydoc =
+            createYDoc();
 
         const ytext =
             ydoc.getText("monaco");
 
 
-        ydocRef.current = ydoc;
-        ytextRef.current = ytext;
+        ydocRef.current =
+            ydoc;
+
+        ytextRef.current =
+            ytext;
 
 
         console.log(
@@ -129,17 +292,22 @@ export default App;`;
         // CREATE SOCKET PROVIDER
         // =====================================================
 
-        const provider = new SocketProvider(
-            socket,
-            numericProjectId,
-            ydoc
-        );
+        const provider =
+            new SocketProvider(
+                socket,
+                numericProjectId,
+                ydoc
+            );
 
-        providerRef.current = provider;
+
+        providerRef.current =
+            provider;
 
 
         // IMPORTANT:
-        // Register Yjs listeners before joining project
+        // Connect provider before joining project.
+        // =====================================================
+
         provider.connect();
 
 
@@ -160,11 +328,18 @@ export default App;`;
             const currentYText =
                 ytextRef.current;
 
-            if (!editor || !currentYText) {
+
+            if (
+                !editor ||
+                !currentYText
+            ) {
                 return;
             }
 
-            if (editorInitializedRef.current) {
+
+            if (
+                editorInitializedRef.current
+            ) {
                 return;
             }
 
@@ -179,7 +354,9 @@ export default App;`;
             );
 
 
-            applyingYjsUpdateRef.current = true;
+            applyingYjsUpdateRef.current =
+                true;
+
 
             try {
 
@@ -187,7 +364,8 @@ export default App;`;
                     currentText
                 );
 
-                editorInitializedRef.current = true;
+                editorInitializedRef.current =
+                    true;
 
             } finally {
 
@@ -208,15 +386,18 @@ export default App;`;
                 socket.id
             );
 
+
             console.log(
                 "Joining project:",
                 numericProjectId
             );
 
+
             socket.emit(
                 "project:join",
                 {
-                    projectId: numericProjectId
+                    projectId:
+                        numericProjectId
                 }
             );
         };
@@ -240,17 +421,19 @@ export default App;`;
         // =====================================================
 
         const handleProjectJoined = ({
-            projectId
+            projectId: joinedProjectId
         }) => {
 
             console.log(
                 "Successfully joined project:",
-                projectId
+                joinedProjectId
             );
+
 
             console.log(
                 "Requesting Yjs synchronization..."
             );
+
 
             provider.requestSync();
         };
@@ -263,7 +446,7 @@ export default App;`;
         const handleCollabSync = (data) => {
 
             if (
-                Number(data.projectId) !==
+                Number(data?.projectId) !==
                 numericProjectId
             ) {
                 return;
@@ -275,30 +458,26 @@ export default App;`;
             );
 
 
-            /*
-             * IMPORTANT:
-             *
-             * SocketProvider applies the actual
-             * Yjs update before/while this event
-             * reaches this handler.
-             *
-             * We MUST NOT initialize defaultCode
-             * before this point.
-             */
+            // =================================================
+            // MARK INITIAL SYNC COMPLETE
+            // =================================================
+
+            initialSyncReceivedRef.current =
+                true;
 
 
-            initialSyncReceivedRef.current = true;
+            // =================================================
+            // INITIALIZE DEFAULT CODE IF EMPTY
+            // =================================================
 
-
-            // -------------------------------------------------
-            // SERVER DOCUMENT IS EMPTY
-            // -------------------------------------------------
-
-            if (ytext.length === 0) {
+            if (
+                ytext.length === 0
+            ) {
 
                 console.log(
                     "Yjs document is empty."
                 );
+
 
                 console.log(
                     "Initializing default code..."
@@ -312,9 +491,9 @@ export default App;`;
             }
 
 
-            // -------------------------------------------------
+            // =================================================
             // INITIALIZE MONACO
-            // -------------------------------------------------
+            // =================================================
 
             initializeEditorFromYjs();
         };
@@ -340,15 +519,35 @@ export default App;`;
         // =====================================================
 
         const handlePresenceUpdate = (data) => {
+            setOnlineUsers(data.users);
 
-            console.log(
-                "PRESENCE UPDATE:",
-                data
+            const onlineUserIds = new Set(
+                data.users.map((onlineUser) =>
+                    String(onlineUser.userId)
+                )
             );
 
-            setOnlineUsers(
-                data.users || []
-            );
+            const editor = editorRef.current;
+
+            if (!editor) {
+                return;
+            }
+
+            Object.entries(
+                remoteCursorDecorationsRef.current
+            ).forEach(([userId, decorationIds]) => {
+
+                if (!onlineUserIds.has(String(userId))) {
+                    editor.deltaDecorations(
+                        decorationIds,
+                        []
+                    );
+
+                    delete remoteCursorDecorationsRef.current[
+                        userId
+                    ];
+                }
+            });
         };
 
 
@@ -419,11 +618,14 @@ export default App;`;
         // CONNECT SOCKET
         // =====================================================
 
-        if (!socket.connected) {
+        if (
+            !socket.connected
+        ) {
 
             console.log(
                 "Connecting socket..."
             );
+
 
             socket.connect();
 
@@ -433,6 +635,7 @@ export default App;`;
                 "Socket already connected:",
                 socket.id
             );
+
 
             socket.emit(
                 "project:join",
@@ -456,7 +659,7 @@ export default App;`;
 
 
             // -------------------------------------------------
-            // Remove Monaco/Yjs binding
+            // Dispose Monaco/Yjs binding
             // -------------------------------------------------
 
             if (
@@ -465,15 +668,81 @@ export default App;`;
 
                 monacoBindingRef.current.dispose();
 
-                monacoBindingRef.current = null;
+                monacoBindingRef.current =
+                    null;
             }
+
+
+            // -------------------------------------------------
+            // Dispose cursor listener
+            // -------------------------------------------------
+
+            if (
+                cursorDisposableRef.current
+            ) {
+
+                cursorDisposableRef.current.dispose();
+
+                cursorDisposableRef.current =
+                    null;
+            }
+
+
+            // -------------------------------------------------
+            // Remove remote cursor listener
+            // -------------------------------------------------
+
+            if (
+                remoteCursorHandlerRef.current
+            ) {
+
+                socket.off(
+                    "collab:cursor",
+                    remoteCursorHandlerRef.current
+                );
+
+                remoteCursorHandlerRef.current =
+                    null;
+            }
+
+
+            // -------------------------------------------------
+            // Remove remote cursor decorations
+            // -------------------------------------------------
+
+            if (
+                editorRef.current
+            ) {
+
+                const allDecorations =
+                    Object.values(
+                        remoteCursorDecorationsRef.current
+                    ).flat();
+
+
+                if (
+                    allDecorations.length > 0
+                ) {
+
+                    editorRef.current.deltaDecorations(
+                        allDecorations,
+                        []
+                    );
+                }
+            }
+
+
+            remoteCursorDecorationsRef.current =
+                {};
 
 
             // -------------------------------------------------
             // Leave project
             // -------------------------------------------------
 
-            if (socket.connected) {
+            if (
+                socket.connected
+            ) {
 
                 socket.emit(
                     "project:leave",
@@ -531,12 +800,13 @@ export default App;`;
 
 
             // -------------------------------------------------
-            // Destroy provider
+            // Destroy SocketProvider
             // -------------------------------------------------
 
             provider.destroy();
 
-            providerRef.current = null;
+            providerRef.current =
+                null;
 
 
             // -------------------------------------------------
@@ -545,18 +815,28 @@ export default App;`;
 
             ydoc.destroy();
 
-            ydocRef.current = null;
-            ytextRef.current = null;
+            ydocRef.current =
+                null;
+
+            ytextRef.current =
+                null;
 
 
             // -------------------------------------------------
             // Reset refs
             // -------------------------------------------------
 
-            editorRef.current = null;
+            editorRef.current =
+                null;
 
-            initialSyncReceivedRef.current = false;
-            editorInitializedRef.current = false;
+            initialSyncReceivedRef.current =
+                false;
+
+            editorInitializedRef.current =
+                false;
+
+            applyingYjsUpdateRef.current =
+                false;
 
 
             // -------------------------------------------------
@@ -565,6 +845,7 @@ export default App;`;
 
             socket.disconnect();
         };
+
 
     }, [projectId, navigate]);
 
@@ -590,7 +871,9 @@ export default App;`;
                 "Invalid projectId"
             );
 
+
             navigate("/");
+
             return;
         }
 
@@ -604,8 +887,11 @@ export default App;`;
                     projectId
                 );
 
+
                 const res =
-                    await getProject(projectId);
+                    await getProject(
+                        projectId
+                    );
 
 
                 console.log(
@@ -625,10 +911,12 @@ export default App;`;
                     error
                 );
 
+
                 console.error(
                     "Response:",
                     error.response?.data
                 );
+
 
                 navigate("/");
 
@@ -638,12 +926,16 @@ export default App;`;
                     "Finished loading project"
                 );
 
-                setLoading(false);
+
+                setLoading(
+                    false
+                );
             }
         };
 
 
         fetchProject();
+
 
     }, [projectId, navigate]);
 
@@ -661,8 +953,17 @@ export default App;`;
         );
 
 
-        editorRef.current = editor;
+        // =====================================================
+        // STORE EDITOR INSTANCE
+        // =====================================================
 
+        editorRef.current =
+            editor;
+
+
+        // =====================================================
+        // GET Y.TEXT
+        // =====================================================
 
         const ytext =
             ytextRef.current;
@@ -678,30 +979,96 @@ export default App;`;
         }
 
 
-        /*
-         * IMPORTANT:
-         *
-         * DO NOT initialize defaultCode here.
-         *
-         * The server synchronization may not have
-         * arrived yet.
-         *
-         * Initializing here would cause:
-         *
-         * Refresh
-         *   ↓
-         * Empty Y.Text
-         *   ↓
-         * defaultCode inserted
-         *   ↓
-         * Server sync arrives later
-         *
-         * Instead, we wait for collab:sync.
-         */
+        // =====================================================
+        // LOCAL CURSOR SYNCHRONIZATION
+        // =====================================================
+
+        if (
+            cursorDisposableRef.current
+        ) {
+
+            cursorDisposableRef.current.dispose();
+
+            cursorDisposableRef.current =
+                null;
+        }
+
+
+        const cursorDisposable =
+            editor.onDidChangeCursorPosition(
+                (event) => {
+
+                    const position =
+                        event.position;
+
+
+                    console.log(
+                        "📤 Sending cursor:",
+                        {
+                            projectId:
+                                numericProjectId,
+
+                            position: {
+                                lineNumber:
+                                    position.lineNumber,
+
+                                column:
+                                    position.column
+                            }
+                        }
+                    );
+
+
+                    socket.emit(
+                        "collab:cursor",
+                        {
+                            projectId:
+                                numericProjectId,
+
+                            position: {
+                                lineNumber:
+                                    position.lineNumber,
+
+                                column:
+                                    position.column
+                            }
+                        }
+                    );
+                }
+            );
+
+
+        cursorDisposableRef.current =
+            cursorDisposable;
 
 
         // =====================================================
-        // INITIALIZE MONACO ONLY IF SYNC ALREADY ARRIVED
+        // REMOTE CURSOR LISTENER
+        // =====================================================
+
+        if (
+            remoteCursorHandlerRef.current
+        ) {
+
+            socket.off(
+                "collab:cursor",
+                remoteCursorHandlerRef.current
+            );
+        }
+
+
+        remoteCursorHandlerRef.current =
+            handleRemoteCursor;
+
+
+        socket.on(
+            "collab:cursor",
+            handleRemoteCursor
+        );
+
+
+        // =====================================================
+        // INITIALIZE MONACO IF SYNC ALREADY ARRIVED
         // =====================================================
 
         if (
@@ -719,7 +1086,9 @@ export default App;`;
             );
 
 
-            applyingYjsUpdateRef.current = true;
+            applyingYjsUpdateRef.current =
+                true;
+
 
             try {
 
@@ -727,7 +1096,9 @@ export default App;`;
                     currentText
                 );
 
-                editorInitializedRef.current = true;
+
+                editorInitializedRef.current =
+                    true;
 
             } finally {
 
@@ -741,17 +1112,19 @@ export default App;`;
         // YJS → MONACO
         // =====================================================
 
-        const handleYTextChange = () => {
-
-            if (
-                !editorRef.current
-            ) {
-                return;
-            }
-
+        const handleYTextChange = (
+            event,
+            transaction
+        ) => {
 
             const currentEditor =
                 editorRef.current;
+
+
+            if (!currentEditor) {
+                return;
+            }
+
 
             const model =
                 currentEditor.getModel();
@@ -762,24 +1135,21 @@ export default App;`;
             }
 
 
-            const newValue =
-                ytext.toString();
+            // -------------------------------------------------
+            // Ignore Monaco-originated Yjs changes
+            // -------------------------------------------------
+
+            if (
+                transaction.origin ===
+                "monaco"
+            ) {
+                return;
+            }
 
 
-            console.log(
-                "Y.Text changed:",
-                newValue
-            );
-
-
-            /*
-             * If Monaco hasn't received its initial
-             * synchronized value yet, don't blindly
-             * overwrite it.
-             *
-             * The initial sync handler is responsible
-             * for initialization.
-             */
+            // -------------------------------------------------
+            // Wait for initial synchronization
+            // -------------------------------------------------
 
             if (
                 !initialSyncReceivedRef.current
@@ -788,31 +1158,136 @@ export default App;`;
             }
 
 
-            /*
-             * IMPORTANT
-             *
-             * editor.setValue() resets the cursor
-             * to the beginning of the document.
-             *
-             * We save the cursor offset first
-             * and restore it afterwards.
-             */
+            const edits = [];
+
+            let index = 0;
 
 
-            const currentPosition =
-                currentEditor.getPosition();
+            // -------------------------------------------------
+            // Convert Yjs delta → Monaco edits
+            // -------------------------------------------------
+
+            for (
+                const operation
+                of event.delta
+            ) {
+
+                // ---------------------------------------------
+                // RETAIN
+                // ---------------------------------------------
+
+                if (
+                    operation.retain
+                ) {
+
+                    index +=
+                        operation.retain;
+                }
 
 
-            let currentOffset = 0;
+                // ---------------------------------------------
+                // DELETE
+                // ---------------------------------------------
+
+                if (
+                    operation.delete
+                ) {
+
+                    const startPosition =
+                        model.getPositionAt(
+                            index
+                        );
 
 
-            if (currentPosition) {
+                    const endPosition =
+                        model.getPositionAt(
+                            index +
+                            operation.delete
+                        );
 
-                currentOffset =
-                    model.getOffsetAt(
-                        currentPosition
-                    );
+
+                    edits.push({
+                        range: {
+                            startLineNumber:
+                                startPosition.lineNumber,
+
+                            startColumn:
+                                startPosition.column,
+
+                            endLineNumber:
+                                endPosition.lineNumber,
+
+                            endColumn:
+                                endPosition.column
+                        },
+
+                        text: ""
+                    });
+                }
+
+
+                // ---------------------------------------------
+                // INSERT
+                // ---------------------------------------------
+
+                if (
+                    operation.insert
+                ) {
+
+                    const position =
+                        model.getPositionAt(
+                            index
+                        );
+
+
+                    edits.push({
+                        range: {
+                            startLineNumber:
+                                position.lineNumber,
+
+                            startColumn:
+                                position.column,
+
+                            endLineNumber:
+                                position.lineNumber,
+
+                            endColumn:
+                                position.column
+                        },
+
+                        text:
+                            operation.insert
+                    });
+
+
+                    index +=
+                        operation.insert.length;
+                }
             }
+
+
+            // -------------------------------------------------
+            // Nothing to apply
+            // -------------------------------------------------
+
+            if (
+                edits.length === 0
+            ) {
+                return;
+            }
+
+
+            // -------------------------------------------------
+            // Apply from end → start
+            // -------------------------------------------------
+
+            edits.reverse();
+
+
+            console.log(
+                "Applying Yjs delta to Monaco:",
+                event.delta
+            );
 
 
             applyingYjsUpdateRef.current =
@@ -821,40 +1296,9 @@ export default App;`;
 
             try {
 
-                currentEditor.setValue(
-                    newValue
-                );
-
-
-                const newModel =
-                    currentEditor.getModel();
-
-
-                if (!newModel) {
-                    return;
-                }
-
-
-                /*
-                 * Make sure the cursor doesn't
-                 * exceed the new document length.
-                 */
-
-                const safeOffset =
-                    Math.min(
-                        currentOffset,
-                        newModel.getValueLength()
-                    );
-
-
-                const newPosition =
-                    newModel.getPositionAt(
-                        safeOffset
-                    );
-
-
-                currentEditor.setPosition(
-                    newPosition
+                currentEditor.executeEdits(
+                    "yjs-remote-change",
+                    edits
                 );
 
             } finally {
@@ -864,6 +1308,10 @@ export default App;`;
             }
         };
 
+
+        // =====================================================
+        // REGISTER YJS OBSERVER
+        // =====================================================
 
         ytext.observe(
             handleYTextChange
@@ -878,10 +1326,9 @@ export default App;`;
             editor.onDidChangeModelContent(
                 (event) => {
 
-                    /*
-                     * Ignore changes caused
-                     * by Yjs.
-                     */
+                    // -----------------------------------------
+                    // Ignore changes caused by Yjs
+                    // -----------------------------------------
 
                     if (
                         applyingYjsUpdateRef.current
@@ -890,17 +1337,20 @@ export default App;`;
                     }
 
 
-                    /*
-                     * Do not send Monaco changes
-                     * before initial synchronization.
-                     *
-                     * This prevents the empty/new
-                     * Monaco model from overwriting
-                     * the collaborative document.
-                     */
+                    // -----------------------------------------
+                    // Wait for initial synchronization
+                    // -----------------------------------------
 
                     if (
                         !initialSyncReceivedRef.current
+                    ) {
+                        return;
+                    }
+
+
+                    if (
+                        !ytextRef.current ||
+                        !ytextRef.current.doc
                     ) {
                         return;
                     }
@@ -912,13 +1362,9 @@ export default App;`;
                     );
 
 
-                    /*
-                     * Monaco may provide multiple
-                     * changes in one event.
-                     *
-                     * Apply changes from the end
-                     * toward the beginning.
-                     */
+                    // -----------------------------------------
+                    // Process changes from end → start
+                    // -----------------------------------------
 
                     const changes =
                         [...event.changes].sort(
@@ -988,17 +1434,92 @@ export default App;`;
                 );
 
 
+                // ---------------------------------------------
+                // Remove Yjs observer
+                // ---------------------------------------------
+
                 ytext.unobserve(
                     handleYTextChange
                 );
 
 
+                // ---------------------------------------------
+                // Remove Monaco content listener
+                // ---------------------------------------------
+
                 monacoChangeDisposable.dispose();
 
 
-                editorRef.current = null;
-            }
+                // ---------------------------------------------
+                // Remove cursor listener
+                // ---------------------------------------------
 
+                if (
+                    cursorDisposableRef.current
+                ) {
+
+                    cursorDisposableRef.current.dispose();
+
+                    cursorDisposableRef.current =
+                        null;
+                }
+
+
+                // ---------------------------------------------
+                // Remove remote cursor listener
+                // ---------------------------------------------
+
+                if (
+                    remoteCursorHandlerRef.current
+                ) {
+
+                    socket.off(
+                        "collab:cursor",
+                        remoteCursorHandlerRef.current
+                    );
+
+                    remoteCursorHandlerRef.current =
+                        null;
+                }
+
+
+                // ---------------------------------------------
+                // Remove remote cursor decorations
+                // ---------------------------------------------
+
+                if (
+                    editorRef.current
+                ) {
+
+                    const allDecorations =
+                        Object.values(
+                            remoteCursorDecorationsRef.current
+                        ).flat();
+
+
+                    if (
+                        allDecorations.length > 0
+                    ) {
+
+                        editorRef.current.deltaDecorations(
+                            allDecorations,
+                            []
+                        );
+                    }
+                }
+
+
+                remoteCursorDecorationsRef.current =
+                    {};
+
+
+                // ---------------------------------------------
+                // Clear editor reference
+                // ---------------------------------------------
+
+                editorRef.current =
+                    null;
+            }
         };
 
 
@@ -1041,8 +1562,8 @@ export default App;`;
 
 
             {/* =================================================
-                NAVBAR
-            ================================================= */}
+                    NAVBAR
+                ================================================= */}
 
             <header className="navbar">
 
@@ -1055,8 +1576,8 @@ export default App;`;
 
 
                     {/* =========================================
-                        ONLINE USERS
-                    ========================================= */}
+                            ONLINE USERS
+                        ========================================= */}
 
                     <div className="online-users">
 
@@ -1111,8 +1632,8 @@ export default App;`;
 
 
                     {/* =========================================
-                        CURRENT USER
-                    ========================================= */}
+                            CURRENT USER
+                        ========================================= */}
 
                     <span>
 
@@ -1122,8 +1643,8 @@ export default App;`;
 
 
                     {/* =========================================
-                        DASHBOARD
-                    ========================================= */}
+                            DASHBOARD
+                        ========================================= */}
 
                     <button
                         onClick={() =>
@@ -1137,8 +1658,8 @@ export default App;`;
 
 
                     {/* =========================================
-                        LOGOUT
-                    ========================================= */}
+                            LOGOUT
+                        ========================================= */}
 
                     <button
                         onClick={logout}
@@ -1154,15 +1675,15 @@ export default App;`;
 
 
             {/* =================================================
-                MAIN IDE
-            ================================================= */}
+                    MAIN IDE
+                ================================================= */}
 
             <div className="ide-main">
 
 
                 {/* =============================================
-                    FILE EXPLORER
-                ============================================= */}
+                        FILE EXPLORER
+                    ============================================= */}
 
                 <aside className="explorer">
 
@@ -1189,8 +1710,8 @@ export default App;`;
 
 
                 {/* =============================================
-                    MONACO EDITOR
-                ============================================= */}
+                        MONACO EDITOR
+                    ============================================= */}
 
                 <main className="editor">
 
@@ -1214,8 +1735,8 @@ export default App;`;
 
 
                 {/* =============================================
-                    AI PANEL
-                ============================================= */}
+                        AI PANEL
+                    ============================================= */}
 
                 <aside className="ai-panel">
 
@@ -1245,8 +1766,8 @@ export default App;`;
 
 
             {/* =================================================
-                TERMINAL
-            ================================================= */}
+                    TERMINAL
+                ================================================= */}
 
             <footer className="terminal">
 
